@@ -1695,11 +1695,47 @@ static int test_dyn_script_1(int idx)
     return 1;
 }
 
+static int test_stream_map_gc_data_read(void)
+{
+    struct helper h;
+    QUIC_STREAM *s = NULL;
+    int testresult = 0;
+
+    if (!helper_init(&h))
+        return 0;
+
+    /* A server-initiated unidirectional stream has only a receive part. */
+    if (!TEST_ptr(s = ossl_quic_stream_map_alloc(h.args.qsm, 3,
+            QUIC_STREAM_INITIATOR_SERVER | QUIC_STREAM_DIR_UNI)))
+        goto err;
+
+    /* Model receipt of FIN followed by the application consuming it. */
+    s->recv_state = QUIC_RSTREAM_STATE_DATA_RECVD;
+    if (!TEST_true(ossl_quic_stream_map_notify_totally_read(h.args.qsm, s))
+        || !TEST_int_eq(s->recv_state, QUIC_RSTREAM_STATE_DATA_READ))
+        goto err;
+
+    s->deleted = 1;
+    ossl_quic_stream_map_update_state(h.args.qsm, s);
+    if (!TEST_true(s->ready_for_gc))
+        goto err;
+
+    ossl_quic_stream_map_gc(h.args.qsm);
+    if (!TEST_ptr_null(ossl_quic_stream_map_get_by_id(h.args.qsm, 3)))
+        goto err;
+
+    testresult = 1;
+err:
+    helper_cleanup(&h);
+    return testresult;
+}
+
 int setup_tests(void)
 {
     ADD_ALL_TESTS(test_script, OSSL_NELEM(scripts));
     ADD_ALL_TESTS(test_dyn_script_1,
         (int)(OSSL_NELEM(dyn_script_1_crypto_1a)
             - dyn_script_1_start_from + 1));
+    ADD_TEST(test_stream_map_gc_data_read);
     return 1;
 }
